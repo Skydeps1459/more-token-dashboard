@@ -1,0 +1,18 @@
+# Runtime / private files (never publish)
+server.pid
+server.log
+sync.pid
+sync.log
+sync-task.log
+*.tmp
+.tmp-shot.png
+.edge-tmp/
+.workbuddy/
+
+# OS / dependencies
+Thumbs.db
+.DS_Store
+node_modules/
+
+# WorkBuddy publish metadata
+*.genie
