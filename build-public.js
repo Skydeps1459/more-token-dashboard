@@ -10,12 +10,27 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { execFileSync } = require("child_process");
 
 const ROOT = __dirname;
 const HTML = path.join(ROOT, "token-dashboard.html");
 const SERVER = path.join(ROOT, "server.js");
 const OUT_DIR = path.join(ROOT, "public");
 const OUT = path.join(OUT_DIR, "index.html");
+
+/** 与 server.js 同口径解析仓库地址；建仓并配置 remote 后静态页会自动带上可点击链接 */
+function getRepoUrl() {
+  let raw = process.env.REPO_URL || "";
+  if (!raw) {
+    try {
+      raw = execFileSync("git", ["remote", "get-url", "origin"], {
+        cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]
+      });
+    } catch (_) { raw = ""; }
+  }
+  const s = String(raw).trim().replace(/\.git$/, "");
+  return /^git@github\.com:/.test(s) ? "https://github.com/" + s.slice(15) : s;
+}
 
 function loadInject() {
   const src = fs.readFileSync(SERVER, "utf8");
@@ -51,7 +66,7 @@ function main() {
   const gen = Math.round(fs.statSync(HTML).mtimeMs);
   const ctx = loadInject();
   const branded = ctx.applyBrandTitle(html);
-  const snippet = toStatic(ctx.liveSnippet(gen, 300000, true), gen);
+  const snippet = toStatic(ctx.liveSnippet(gen, 300000, true, getRepoUrl()), gen);
   if (branded.indexOf("</body>") < 0) throw new Error("no </body> in dashboard html");
   const out = branded.replace("</body>", snippet + "\n</body>");
   fs.mkdirSync(OUT_DIR, { recursive: true });

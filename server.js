@@ -18,7 +18,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 
 const ROOT = __dirname;
 const HTML = path.join(ROOT, "token-dashboard.html");
@@ -39,6 +39,26 @@ const REFRESH_MS = Math.max(1000, Number(process.env.REFRESH_MS || 300000));
 const ANIMATE = process.env.ANIMATE !== "0";
 const SITE_TITLE = process.env.TITLE || "More的Token 消耗看板";
 const HOST = "127.0.0.1";
+
+// 仓库地址：优先 REPO_URL，其次读取 git remote origin（5 分钟缓存，建仓后自动生效）
+let repoCache = { at: 0, url: "" };
+function normalizeRepoUrl(u) {
+  const s = String(u || "").trim().replace(/\.git$/, "");
+  if (/^git@github\.com:/.test(s)) return "https://github.com/" + s.slice("git@github.com:".length);
+  return s;
+}
+function getRepoUrl() {
+  if (process.env.REPO_URL) return normalizeRepoUrl(process.env.REPO_URL);
+  if (Date.now() - repoCache.at < 300000) return repoCache.url;
+  let url = "";
+  try {
+    url = normalizeRepoUrl(execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]
+    }));
+  } catch (_) { url = ""; }
+  repoCache = { at: Date.now(), url };
+  return url;
+}
 
 let nextRunAt = Date.now() + REFRESH_MS;
 // 文件 mtime 是浮点数，统一取整，避免与前端注入的整数版本比较时误判为「数据已更新」
@@ -126,13 +146,21 @@ function generate(reason) {
 }
 
 /** 注入到页面底部的状态条与自动刷新逻辑 */
-function liveSnippet(gen, refresh, animate) {
+function liveSnippet(gen, refresh, animate, repoUrl) {
   // 热力图逐行「扫描点亮」：用 10 条 nth-child 规则形成波浪，重建后自动生效
   const rowDelays = [];
   for (let k = 1; k <= 10; k++) {
     rowDelays.push('body.__anim #heatWrap .hrow:nth-child(10n+' + k + '){animation-delay:' +
       (0.06 + k * 0.05).toFixed(2) + 's}');
   }
+  const GH_PATH = "M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z";
+  const ghIcon = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="' + GH_PATH + '"/></svg>';
+  const safeRepo = escapeHtml(repoUrl || "");
+  const repoTag = safeRepo
+    ? '<a id="__repoLink" href="' + safeRepo + '" target="_blank" rel="noopener noreferrer" title="打开 GitHub 仓库">' +
+      ghIcon + '<span>GitHub 仓库</span><span class="__arw">&#8599;</span></a>'
+    : '<span id="__repoLink" class="__pending" title="配置 REPO_URL 或完成 GitHub 建仓后自动变为可点击链接">' +
+      ghIcon + '<span>仓库 · 待连接</span></span>';
   return [
     '<style>',
     /* ---- 状态条基础样式（无动画也保留）---- */
@@ -150,6 +178,16 @@ function liveSnippet(gen, refresh, animate) {
     'background:var(--border3,#eee);overflow:hidden}',
     '#__liveFill{display:block;height:100%;width:100%;',
     'background:linear-gradient(90deg,#5f8cb6,#a78bfa,#5eead4,#5f8cb6);transition:width 1s linear}',
+    /* ---- 左下角仓库徽标基础样式 ---- */
+    '#__repoLink{position:fixed;left:16px;bottom:16px;z-index:99999;display:flex;align-items:center;gap:7px;',
+    'padding:7px 12px;border-radius:999px;text-decoration:none;',
+    'border:1px solid var(--border,#e5e5e5);background:var(--card,#fff);color:var(--t2,#666);',
+    'box-shadow:0 2px 12px rgba(0,0,0,.10);',
+    'font:12px/1.4 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;user-select:none}',
+    '#__repoLink svg{width:14px;height:14px;fill:currentColor;flex:none}',
+    '#__repoLink .__arw{opacity:.65;margin-left:1px}',
+    'a#__repoLink:hover{color:var(--blue,#5f8cb6);border-color:rgba(111,168,254,.5)}',
+    '#__repoLink.__pending{opacity:.62;border-style:dashed;cursor:default}',
     /* ---- 动效 ---- */
     '@keyframes __fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}',
     '@keyframes __slideIn{from{opacity:0;transform:translateY(16px) scale(.94)}to{opacity:1;transform:none}}',
@@ -215,6 +253,10 @@ function liveSnippet(gen, refresh, animate) {
     'box-shadow:0 8px 30px rgba(0,0,0,.18),0 0 0 1px rgba(111,168,254,.28),inset 0 1px 0 rgba(255,255,255,.12)}',
     'body.__anim #__liveFill{background-size:200% 100%;animation:__grad 4s linear infinite;',
     'box-shadow:0 0 10px rgba(94,234,212,.55)}',
+    'body.__anim #__repoLink{background:color-mix(in srgb,var(--card,#fff) 76%,transparent);',
+    'backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3);',
+    'box-shadow:0 8px 30px rgba(0,0,0,.18),0 0 0 1px rgba(111,168,254,.20),inset 0 1px 0 rgba(255,255,255,.12);',
+    'animation:__slideIn .5s .25s cubic-bezier(.22,.8,.24,1) both}',
     /* 数据更新时的全屏扫描线 */
     'body.__anim #__scan{display:block;position:fixed;inset:0;z-index:99998;',
     'pointer-events:none;opacity:0;',
@@ -240,7 +282,7 @@ function liveSnippet(gen, refresh, animate) {
     'body.__anim{transition:background-color .3s,color .3s}',
     'body.__leaving{opacity:0;transition:opacity .38s ease}',
     '@media (prefers-reduced-motion:reduce){',
-    ' .__enter,body.__anim #__liveBar,body.__anim #__liveBar .__dot,body.__anim #__liveBar.busy .__dot,',
+    ' .__enter,body.__anim #__liveBar,body.__anim #__repoLink,body.__anim #__liveBar .__dot,body.__anim #__liveBar.busy .__dot,',
     ' body.__anim #kpis .kpi::after,body.__anim #heatWrap .hrow,body.__anim h1,',
     ' body.__anim #__liveFill,body.__anim #__scan.go,#__aurora i,',
     ' body.__anim #mdSvg,body.__anim #rdSvg,body.__anim #dmSvg,body.__anim #panel{animation:none!important;opacity:1!important}',
@@ -249,6 +291,7 @@ function liveSnippet(gen, refresh, animate) {
     '}',
     '</style>',
     '<div id="__aurora"><i></i><i></i><i></i></div><div id="__scan"></div>',
+    repoTag,
     '<div id="__liveBar"><span class="__dot"></span><span id="__liveTxt"> connecting </span>',
     '<button id="__liveRefresh" title="立即重新扫描日志并生成看板">立即更新</button>',
     '<div id="__liveTrack"><i id="__liveFill"></i></div></div>',
@@ -379,9 +422,14 @@ function escapeHtml(s) {
 /** 生成器每 5 分钟重写 HTML，标题统一在此替换（幂等），站点与磁盘文件都生效 */
 function applyBrandTitle(html) {
   const t = escapeHtml(SITE_TITLE);
-  return html
+  let out = html
     .replace(/<title>[^<]*<\/title>/, () => "<title>" + t + "</title>")
     .replace(/(<h1[^>]*>)[^<]*(<\/h1>)/, (_m, open, close) => open + t + close);
+  // 注入 favicon（幂等：已存在就不重复添加）
+  if (out.indexOf('rel="icon"') < 0) {
+    out = out.replace("</title>", '</title>\n<link rel="icon" type="image/svg+xml" href="favicon.svg">');
+  }
+  return out;
 }
 
 function sendJson(res, code, obj) {
@@ -402,7 +450,7 @@ function serveDashboard(res) {
     return;
   }
   const branded = applyBrandTitle(html);
-  const snippet = liveSnippet(state.genMs, REFRESH_MS, ANIMATE);
+  const snippet = liveSnippet(state.genMs, REFRESH_MS, ANIMATE, getRepoUrl());
   const out = branded.indexOf("</body>") >= 0
     ? branded.replace("</body>", snippet + "\n</body>")
     : branded + snippet;
