@@ -60,7 +60,7 @@ function syncOnce() {
 
   // 3. 提交（身份回退，避免未配置 git user 时失败）
   if (tryGit(["add", "-A"]) === null) { log("git add FAILED"); return; }
-  const msg = "chore: daily auto sync " + new Date().toISOString().slice(0, 16).replace("T", " ");
+  const msg = "chore: daily auto sync " + new Date().toLocaleString("sv-SE").slice(0, 16);
   if (tryGit(["-c", "user.name=More", "-c", "user.email=more@users.noreply.github.com",
     "commit", "-m", msg]) === null) {
     log("commit FAILED (nothing to commit or git error)");
