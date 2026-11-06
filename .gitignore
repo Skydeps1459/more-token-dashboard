@@ -5,8 +5,9 @@ sync.pid
 sync.log
 sync-task.log
 *.tmp
-.tmp-shot.png
-.edge-tmp/
+.tmp-*.png
+.tmp-*.html
+.edge-tmp*/
 .workbuddy/
 
 # OS / dependencies
